@@ -105,7 +105,8 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
                                                   unsigned int num_discs,
                                                   struct share_info *sinfo,
                                                   unsigned int num_shares,
-                                                  NSString *bridged_eth)
+                                                  NSString *bridged_eth,
+                                                  NSString *rosetta_tag)
 {
     /* **************************************************************** */
     /* Linux bootloader setup:
@@ -243,23 +244,26 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
     // expose the Rosetta directory share:
     NSString *tag = @"ROSETTA";
 
-    NSError *validationError;
-    if (![VZVirtioFileSystemDeviceConfiguration validateTag:tag error:&validationError]) {
-        // Handle validation error here.
-        NSLog(@"-- Configuration validation failure! %@\n", validationError);
-        return nil;
+    // expose the Rosetta directory share as value of rosetta_tag NSString:
+    if (rosetta_tag) {
+        NSError *validationError;
+        if (![VZVirtioFileSystemDeviceConfiguration validateTag:rosetta_tag error:&validationError]) {
+            // Handle validation error here.
+            NSLog(@"-- Configuration validation failure! %@\n", validationError);
+            return nil;
+        }
+
+        VZLinuxRosettaDirectoryShare *rosettaDirectoryShare = [[VZLinuxRosettaDirectoryShare alloc] initWithError:&validationError];
+        if (validationError) {
+            NSLog(@"-- Configuration validation failure! %@\n", validationError);
+            return nil;
+        }
+
+        VZVirtioFileSystemDeviceConfiguration *fileSystemDevice = [[VZVirtioFileSystemDeviceConfiguration alloc] initWithTag:rosetta_tag];
+        fileSystemDevice.share = rosettaDirectoryShare;
+
+        conf.directorySharingDevices = @[fileSystemDevice];
     }
-
-    VZLinuxRosettaDirectoryShare *rosettaDirectoryShare = [[VZLinuxRosettaDirectoryShare alloc] initWithError:&validationError];
-    if (validationError) {
-        NSLog(@"-- Configuration validation failure! %@\n", validationError);
-        return nil;
-    }
-
-    VZVirtioFileSystemDeviceConfiguration *fileSystemDevice = [[VZVirtioFileSystemDeviceConfiguration alloc] initWithTag:tag];
-    fileSystemDevice.share = rosettaDirectoryShare;
-
-    conf.directorySharingDevices = @[fileSystemDevice];
 
     return conf;
 }
@@ -281,6 +285,7 @@ static void usage(const char *me)
                     "\t-p <number of processors>                (Default 1)\n"
                     "\t-m <memory size in MB>                   (Default 512MB)\n"
                     "\t-t <tty type>                            (0 = stdio, 1 = pty (default))\n"
+                    "\t-g <rosetta directory share tag>\n"
                     "\n\tSpecify multiple discs with multiple -d/-c options, in order (max %d)\n",
                     me, MAX_SHARES, MAX_DISCS);
 }
@@ -295,6 +300,7 @@ int main(int argc, char *argv[])
         NSString *disc_path = NULL;
         NSString *cdrom_path = NULL;
         NSString *eth_if = NULL;
+        NSString *rosetta_tag = NULL;
         unsigned int cpus = 0;
         unsigned int mem = 0;
         unsigned int tty_type = 1;
@@ -306,7 +312,7 @@ int main(int argc, char *argv[])
         unsigned int num_shares = 0;
 
         int ch;
-        while ((ch = getopt(argc, argv, "k:a:i:d:c:s:b:p:m:t:h")) != -1) {
+        while ((ch = getopt(argc, argv, "k:a:i:d:c:s:b:p:m:t:g:h")) != -1) {
             switch (ch) {
                 case 'k':
                     kern_path = [NSString stringWithUTF8String:optarg];
@@ -379,6 +385,9 @@ int main(int argc, char *argv[])
                         return 1;
                     }
                     break;
+                case 'g':
+                    rosetta_tag = [NSString stringWithUTF8String:optarg];
+                    break;
 
                 case 'h':
                 default:
@@ -414,8 +423,9 @@ int main(int argc, char *argv[])
                                                           kern_path, initrd_path,
                                                           dinfo, num_discs,
                                                           sinfo, num_shares,
-                                                          eth_if);
- 
+                                                          eth_if,
+                                                          rosetta_tag);
+
         if (!conf) {
             NSLog(@"Couldn't create configuration for VM.\n");
             return 1;
